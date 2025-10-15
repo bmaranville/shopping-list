@@ -510,7 +510,10 @@
                     // Reconnection
                     reconnectInterval: null,
                     reconnectAttempts: 0,
-                    maxReconnectAttempts: 10
+                    maxReconnectAttempts: 10,
+                    
+                    // Peer tracking for reconnection
+                    knownPeerIds: new Set()
                 }
             },
             
@@ -551,6 +554,10 @@
                     this.currentListName = this.newListName.trim();
                     this.items = [];
                     this.isListCreator = true; // This peer created the list
+                    
+                    // Track our own peer ID
+                    this.knownPeerIds.add(this.peerId);
+                    this.saveKnownPeers();
                     
                     this.saveToStorage();
                     this.showCreateModal = false;
@@ -648,6 +655,7 @@
                         this.currentListName = parsed.currentListName;
                         this.items = parsed.items || [];
                         this.isListCreator = parsed.isListCreator || false;
+                        this.loadKnownPeers();
                     }
                 },
                 
@@ -657,6 +665,23 @@
                         const parsed = JSON.parse(data);
                         this.currentListName = parsed.name || `Shopping List ${listId.substring(0, 8)}`;
                         this.items = parsed.items || [];
+                    }
+                },
+                
+                saveKnownPeers() {
+                    if (this.currentListId) {
+                        const knownPeersArray = Array.from(this.knownPeerIds);
+                        this.localStorage.setItem(`peers_${this.currentListId}`, JSON.stringify(knownPeersArray));
+                    }
+                },
+                
+                loadKnownPeers() {
+                    if (this.currentListId) {
+                        const data = this.localStorage.getItem(`peers_${this.currentListId}`);
+                        if (data) {
+                            const peersArray = JSON.parse(data);
+                            this.knownPeerIds = new Set(peersArray);
+                        }
                     }
                 },
                 
@@ -794,6 +819,11 @@
                     conn.on('open', () => {
                         console.log('✅ Connection established with peer:', conn.peer);
                         this.connections.set(conn.peer, conn);
+                        
+                        // Track this peer ID for future reconnections
+                        this.knownPeerIds.add(conn.peer);
+                        this.saveKnownPeers();
+                        
                         this.updateConnectionStatus();
                         
                         // Send current state to new peer
@@ -840,17 +870,26 @@
                 },
                 
                 handleReconnection() {
+                    // Special case: If we're the list creator but our peer ID changed (after refresh)
+                    if (this.currentListId && this.isListCreator && this.currentListId !== this.peerId) {
+                        console.log('🔄 List creator peer ID changed after refresh. Updating list ID from', this.currentListId, 'to', this.peerId);
+                        this.currentListId = this.peerId; // Update to new peer ID
+                        this.saveToStorage(); // Save the new list ID
+                        this.connectionStatus = 'List updated - waiting for peers to reconnect...';
+                        // Note: Other peers will need to discover our new ID through reconnection attempts
+                        return;
+                    }
+                    
                     // If we have a stored list but no pending join, try to reconnect
                     if (this.currentListId && !this.pendingJoinId && this.currentListId !== this.peerId) {
                         console.log('🔄 Attempting to reconnect to stored list:', this.currentListId);
                         this.connectionStatus = 'Reconnecting to list...';
                         this.connectToPeerWithFallback(this.currentListId);
                     }
-                    // If we created the list, wait for reconnections but also try to reconnect to others
+                    // If we created the list, wait for reconnections
                     else if (this.currentListId && this.isListCreator) {
                         console.log('📋 List creator ready for reconnections to list:', this.currentListName);
                         this.connectionStatus = 'Waiting for peers to reconnect...';
-                        // Note: List creator will also try to reconnect if they discover other peers
                     }
                 },
                 
@@ -864,10 +903,22 @@
                             this.reconnectAttempts++;
                             console.log(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
                             this.connectionStatus = `Reconnecting... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`;
+                            
+                            // Try the primary list ID first
                             this.connectToPeerWithFallback(this.currentListId);
+                            
+                            // Also try all known peer IDs for this list (in case creator refreshed)
+                            if (this.knownPeerIds.size > 0) {
+                                console.log('🔄 Also trying known peer IDs:', Array.from(this.knownPeerIds));
+                                this.knownPeerIds.forEach(peerId => {
+                                    if (peerId !== this.peerId && peerId !== this.currentListId) {
+                                        setTimeout(() => this.connectToPeerWithFallback(peerId), Math.random() * 2000);
+                                    }
+                                });
+                            }
                         } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
                             console.log('⏹️ Max reconnection attempts reached');
-                            this.connectionStatus = 'Connection lost - host may be offline';
+                            this.connectionStatus = 'Connection lost - peers may be offline';
                             this.stopReconnectionAttempts();
                         }
                     }, 10000); // Try every 10 seconds
@@ -1106,6 +1157,11 @@
                     this.currentListId = hostPeerId;
                     this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
                     this.isListCreator = false; // This peer joined an existing list
+                    
+                    // Track the host peer ID and our own
+                    this.knownPeerIds.add(hostPeerId);
+                    this.knownPeerIds.add(this.peerId);
+                    this.saveKnownPeers();
                     
                     // Try to load existing data for this list
                     this.loadListFromStorage(this.currentListId);
