@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Collaborative Shopping List</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: #2c3e50;
+            color: white;
+            padding: 20px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            margin-bottom: 10px;
+        }
+        
+        .status {
+            font-size: 0.9em;
+            opacity: 0.8;
+        }
+        
+        .connection-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        
+        .connection-status.connected {
+            background: #2ecc71;
+        }
+        
+        .connection-status.disconnected {
+            background: #e74c3c;
+        }
+        
+        .main-content {
+            padding: 20px;
+        }
+        
+        .list-controls {
+            margin-bottom: 20px;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .btn {
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #3498db;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        
+        .btn-success {
+            background: #2ecc71;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #27ae60;
+        }
+        
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #c0392b;
+        }
+        
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+        }
+        
+        .input {
+            flex: 1;
+            padding: 10px;
+            border: 2px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        
+        .input:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        
+        .share-code {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+            font-family: monospace;
+            word-break: break-all;
+            margin-bottom: 10px;
+        }
+        
+        .shopping-list {
+            margin-top: 20px;
+        }
+        
+        .list-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f8f9fa;
+            border-radius: 6px;
+            border-left: 4px solid #3498db;
+            transition: all 0.3s ease;
+        }
+        
+        .list-item.collected {
+            opacity: 0.6;
+            border-left-color: #2ecc71;
+            text-decoration: line-through;
+        }
+        
+        .item-checkbox {
+            margin-right: 12px;
+            transform: scale(1.2);
+        }
+        
+        .item-text {
+            flex: 1;
+            font-size: 16px;
+        }
+        
+        .item-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-small {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+        
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6c757d;
+        }
+        
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        
+        .modal-content {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 400px;
+        }
+        
+        .modal-header {
+            margin-bottom: 20px;
+        }
+        
+        .modal-footer {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+        
+        .peers-count {
+            font-size: 0.8em;
+            opacity: 0.7;
+        }
+        
+        .status-message {
+            text-align: center;
+            padding: 20px;
+            color: #6c757d;
+            font-style: italic;
+        }
+        
+        .share-buttons {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="container">
+            <div class="header">
+                <h1>🛒 Collaborative Shopping List</h1>
+                <div class="status">
+                    <span :class="['connection-status', isConnected ? 'connected' : 'disconnected']"></span>
+                    {{ connectionStatus }}
+                    <span v-if="connectedPeers > 0" class="peers-count">({{ connectedPeers }} peer{{ connectedPeers > 1 ? 's' : '' }})</span>
+                </div>
+            </div>
+            
+            <div class="main-content">
+                <!-- List Controls -->
+                <div class="list-controls" v-if="!currentListId">
+                    <div v-if="!peerId" class="status-message">
+                        <p>🔄 Initializing peer connection...</p>
+                    </div>
+                    <div v-else class="btn-group">
+                        <button class="btn btn-primary" @click="showCreateModal = true">
+                            📝 Create New List
+                        </button>
+                        <button class="btn btn-success" @click="showJoinModal = true">
+                            🔗 Join Existing List
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Current List Info -->
+                <div v-if="currentListId" class="list-info">
+                    <h3>{{ currentListName }}</h3>
+                    <div class="share-code" v-if="isHost">
+                        <strong>Share this Peer ID with others:</strong><br>
+                        <code>{{ currentListId }}</code>
+                        <div class="share-buttons">
+                            <button class="btn btn-small" @click="shareList">
+                                📤 Share
+                            </button>
+                            <button class="btn btn-small" @click="shareViaSMS">
+                                💬 SMS
+                            </button>
+                            <button class="btn btn-small" @click="copyPeerID">
+                                📋 Copy ID
+                            </button>
+                        </div>
+                        <p style="font-size: 0.8em; margin-top: 5px; color: #666;">
+                            Others can join by entering this ID in "Join Existing List"
+                        </p>
+                    </div>
+                    <div class="share-code" v-else>
+                        <strong>Connected to:</strong> {{ currentListId.substring(0, 12) }}...
+                    </div>
+                    <button class="btn btn-danger btn-small" @click="leaveList">
+                        Leave List
+                    </button>
+                </div>
+                
+                <!-- Add Item Form -->
+                <div v-if="currentListId" class="add-item-form">
+                    <div class="input-group">
+                        <input 
+                            v-model="newItemText" 
+                            class="input" 
+                            placeholder="Add new item..." 
+                            @keyup.enter="addItem"
+                        >
+                        <button class="btn btn-primary" @click="addItem" :disabled="!newItemText.trim()">
+                            ➕ Add
+                        </button>
+                    </div>
+                </div>
+                
+                <!-- Shopping List -->
+                <div v-if="currentListId" class="shopping-list">
+                    <div v-if="items.length === 0" class="empty-state">
+                        <div class="empty-state-icon">🛒</div>
+                        <p>Your shopping list is empty</p>
+                        <p>Add some items to get started!</p>
+                    </div>
+                    
+                    <div v-for="item in items" :key="item.id" :class="['list-item', { collected: item.collected }]">
+                        <input 
+                            type="checkbox" 
+                            class="item-checkbox"
+                            :checked="item.collected"
+                            @change="toggleItem(item.id)"
+                        >
+                        <span class="item-text">{{ item.text }}</span>
+                        <div class="item-actions">
+                            <button class="btn btn-danger btn-small" @click="removeItem(item.id)">
+                                🗑️
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Create List Modal -->
+        <div v-if="showCreateModal" class="modal" @click.self="showCreateModal = false">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Create New Shopping List</h3>
+                </div>
+                <div class="input-group">
+                    <input 
+                        v-model="newListName" 
+                        class="input" 
+                        placeholder="List name..." 
+                        @keyup.enter="createList"
+                    >
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" @click="showCreateModal = false">Cancel</button>
+                    <button class="btn btn-primary" @click="createList" :disabled="!newListName.trim()">
+                        Create
+                    </button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Join List Modal -->
+        <div v-if="showJoinModal" class="modal" @click.self="showJoinModal = false">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h3>Join Existing List</h3>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 5px;">
+                        Enter the Peer ID shared by the list creator
+                    </p>
+                </div>
+                <div class="input-group">
+                    <input 
+                        v-model="joinListId" 
+                        class="input" 
+                        placeholder="Enter Peer ID..." 
+                        @keyup.enter="joinList"
+                    >
+                </div>
+                <div class="modal-footer">
+                    <button class="btn" @click="showJoinModal = false">Cancel</button>
+                    <button class="btn btn-success" @click="joinList" :disabled="!joinListId.trim()">
+                        Connect
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    // UI State
+                    showCreateModal: false,
+                    showJoinModal: false,
+                    newListName: '',
+                    joinListId: '',
+                    newItemText: '',
+                    
+                    // App State
+                    currentListId: null,
+                    currentListName: '',
+                    items: [],
+                    
+                    // Connection State
+                    isConnected: false,
+                    connectedPeers: 0,
+                    connectionStatus: 'Offline',
+                    
+                    // PeerJS WebRTC
+                    peer: null,
+                    peerId: null,
+                    connections: new Map(),
+                    isHost: false,
+                    
+                    // Storage
+                    localStorage: window.localStorage
+                }
+            },
+            
+            mounted() {
+                this.loadFromStorage();
+                this.initializePeerJS();
+            },
+            
+            methods: {
+                // List Management
+                createList() {
+                    if (!this.newListName.trim()) return;
+                    
+                    this.currentListId = this.peerId; // Use peer ID as list ID
+                    this.currentListName = this.newListName.trim();
+                    this.items = [];
+                    this.isHost = true;
+                    
+                    this.saveToStorage();
+                    this.showCreateModal = false;
+                    this.newListName = '';
+                    
+                    this.connectionStatus = 'Waiting for peers to join...';
+                },
+                
+                joinList() {
+                    if (!this.joinListId.trim()) return;
+                    
+                    const hostPeerId = this.joinListId.trim();
+                    this.currentListId = hostPeerId;
+                    this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
+                    this.isHost = false;
+                    
+                    // Try to load existing data for this list
+                    this.loadListFromStorage(this.currentListId);
+                    
+                    this.saveToStorage();
+                    this.showJoinModal = false;
+                    this.joinListId = '';
+                    
+                    // Connect to the host peer
+                    this.connectToPeer(hostPeerId);
+                },
+                
+                leaveList() {
+                    this.currentListId = null;
+                    this.currentListName = '';
+                    this.items = [];
+                    this.isHost = false;
+                    this.disconnectAllPeers();
+                    this.saveToStorage();
+                },
+                
+                // Item Management
+                addItem() {
+                    if (!this.newItemText.trim()) return;
+                    
+                    const item = {
+                        id: this.generateItemId(),
+                        text: this.newItemText.trim(),
+                        collected: false,
+                        timestamp: Date.now()
+                    };
+                    
+                    this.items.push(item);
+                    this.newItemText = '';
+                    this.saveToStorage();
+                    this.broadcastToPeers('item_added', item);
+                },
+                
+                removeItem(itemId) {
+                    const index = this.items.findIndex(item => item.id === itemId);
+                    if (index !== -1) {
+                        this.items.splice(index, 1);
+                        this.saveToStorage();
+                        this.broadcastToPeers('item_removed', { id: itemId });
+                    }
+                },
+                
+                toggleItem(itemId) {
+                    const item = this.items.find(item => item.id === itemId);
+                    if (item) {
+                        item.collected = !item.collected;
+                        item.timestamp = Date.now();
+                        this.saveToStorage();
+                        this.broadcastToPeers('item_updated', item);
+                    }
+                },
+                
+                // Storage
+                saveToStorage() {
+                    const data = {
+                        currentListId: this.currentListId,
+                        currentListName: this.currentListName,
+                        items: this.items
+                    };
+                    this.localStorage.setItem('shoppingList', JSON.stringify(data));
+                    
+                    // Also save list-specific data
+                    if (this.currentListId) {
+                        this.localStorage.setItem(`list_${this.currentListId}`, JSON.stringify({
+                            name: this.currentListName,
+                            items: this.items
+                        }));
+                    }
+                },
+                
+                loadFromStorage() {
+                    const data = this.localStorage.getItem('shoppingList');
+                    if (data) {
+                        const parsed = JSON.parse(data);
+                        this.currentListId = parsed.currentListId;
+                        this.currentListName = parsed.currentListName;
+                        this.items = parsed.items || [];
+                    }
+                },
+                
+                loadListFromStorage(listId) {
+                    const data = this.localStorage.getItem(`list_${listId}`);
+                    if (data) {
+                        const parsed = JSON.parse(data);
+                        this.currentListName = parsed.name || `Shopping List ${listId.substring(0, 8)}`;
+                        this.items = parsed.items || [];
+                    }
+                },
+                
+                // PeerJS Setup
+                initializePeerJS() {
+                    this.connectionStatus = 'Initializing...';
+                    
+                    // Create a new peer with automatic ID generation
+                    this.peer = new Peer({
+                        config: {
+                            iceServers: [
+                                { urls: 'stun:stun.l.google.com:19302' },
+                                { urls: 'stun:stun1.l.google.com:19302' }
+                            ]
+                        }
+                    });
+                    
+                    // Handle peer events
+                    this.peer.on('open', (id) => {
+                        this.peerId = id;
+                        this.connectionStatus = 'Ready';
+                        console.log('Peer ID:', id);
+                        
+                        // If we had a current list, we can now create/join it
+                        if (this.currentListId && this.currentListId !== id) {
+                            this.connectToPeer(this.currentListId);
+                        }
+                    });
+                    
+                    this.peer.on('connection', (conn) => {
+                        this.handleIncomingConnection(conn);
+                    });
+                    
+                    this.peer.on('error', (error) => {
+                        console.error('Peer error:', error);
+                        this.connectionStatus = 'Connection error';
+                    });
+                    
+                    this.peer.on('disconnected', () => {
+                        this.connectionStatus = 'Disconnected';
+                        this.isConnected = false;
+                    });
+                },
+                
+                connectToPeer(peerId) {
+                    if (!this.peer) {
+                        this.connectionStatus = 'Peer not initialized';
+                        return;
+                    }
+                    
+                    if (peerId === this.peerId) {
+                        alert('Cannot connect to yourself!');
+                        return;
+                    }
+                    
+                    this.connectionStatus = 'Connecting to peer...';
+                    
+                    try {
+                        const conn = this.peer.connect(peerId);
+                        this.handleConnection(conn);
+                    } catch (error) {
+                        console.error('Failed to connect to peer:', error);
+                        this.connectionStatus = 'Connection failed';
+                    }
+                },
+                
+                handleIncomingConnection(conn) {
+                    console.log('Incoming connection from:', conn.peer);
+                    this.handleConnection(conn);
+                },
+                
+                handleConnection(conn) {
+                    conn.on('open', () => {
+                        console.log('Connected to peer:', conn.peer);
+                        this.connections.set(conn.peer, conn);
+                        this.updateConnectionStatus();
+                        
+                        // Send current state to new peer
+                        this.sendToPeer(conn, 'full_sync', {
+                            items: this.items,
+                            listName: this.currentListName
+                        });
+                    });
+                    
+                    conn.on('data', (data) => {
+                        this.handlePeerMessage(data, conn.peer);
+                    });
+                    
+                    conn.on('close', () => {
+                        console.log('Peer disconnected:', conn.peer);
+                        this.connections.delete(conn.peer);
+                        this.updateConnectionStatus();
+                    });
+                    
+                    conn.on('error', (error) => {
+                        console.error('Connection error with peer:', conn.peer, error);
+                        this.connections.delete(conn.peer);
+                        this.updateConnectionStatus();
+                    });
+                },
+                
+                updateConnectionStatus() {
+                    this.connectedPeers = this.connections.size;
+                    this.isConnected = this.connectedPeers > 0;
+                    
+                    if (this.connectedPeers === 0) {
+                        this.connectionStatus = this.isHost ? 'Waiting for peers to join...' : 'Ready to connect';
+                    } else {
+                        this.connectionStatus = `Connected (${this.connectedPeers} peer${this.connectedPeers > 1 ? 's' : ''})`;
+                    }
+                },
+                
+                handlePeerMessage(message, fromPeer) {
+                    console.log('Received message:', message.type, 'from:', fromPeer);
+                    
+                    switch (message.type) {
+                        case 'full_sync':
+                            if (message.data.listName && !this.currentListName.startsWith('Shopping List')) {
+                                // Update list name if we're joining
+                                this.currentListName = message.data.listName;
+                            }
+                            this.mergeItems(message.data.items);
+                            break;
+                        case 'item_added':
+                            this.addItemFromPeer(message.data);
+                            break;
+                        case 'item_removed':
+                            this.removeItemFromPeer(message.data.id);
+                            break;
+                        case 'item_updated':
+                            this.updateItemFromPeer(message.data);
+                            break;
+                    }
+                },
+                
+                broadcastToPeers(type, data) {
+                    const message = {
+                        type,
+                        data,
+                        timestamp: Date.now()
+                    };
+                    
+                    this.connections.forEach((conn, peerId) => {
+                        this.sendToPeer(conn, type, data);
+                    });
+                },
+                
+                sendToPeer(conn, type, data) {
+                    if (conn && conn.open) {
+                        try {
+                            conn.send({
+                                type,
+                                data,
+                                timestamp: Date.now()
+                            });
+                        } catch (error) {
+                            console.error('Error sending to peer:', error);
+                        }
+                    }
+                },
+                
+                // Peer sync handlers
+                addItemFromPeer(item) {
+                    if (!this.items.find(existing => existing.id === item.id)) {
+                        this.items.push(item);
+                        this.saveToStorage();
+                    }
+                },
+                
+                removeItemFromPeer(itemId) {
+                    const index = this.items.findIndex(item => item.id === itemId);
+                    if (index !== -1) {
+                        this.items.splice(index, 1);
+                        this.saveToStorage();
+                    }
+                },
+                
+                updateItemFromPeer(updatedItem) {
+                    const index = this.items.findIndex(item => item.id === updatedItem.id);
+                    if (index !== -1) {
+                        // Use timestamp to resolve conflicts
+                        if (updatedItem.timestamp > this.items[index].timestamp) {
+                            this.items[index] = updatedItem;
+                            this.saveToStorage();
+                        }
+                    }
+                },
+                
+                mergeItems(peerItems) {
+                    const merged = new Map();
+                    
+                    // Add our items
+                    this.items.forEach(item => {
+                        merged.set(item.id, item);
+                    });
+                    
+                    // Merge with peer items (using timestamp for conflict resolution)
+                    peerItems.forEach(peerItem => {
+                        const existing = merged.get(peerItem.id);
+                        if (!existing || peerItem.timestamp > existing.timestamp) {
+                            merged.set(peerItem.id, peerItem);
+                        }
+                    });
+                    
+                    this.items = Array.from(merged.values()).sort((a, b) => a.timestamp - b.timestamp);
+                    this.saveToStorage();
+                },
+                
+                disconnectAllPeers() {
+                    this.connections.forEach((conn) => {
+                        if (conn && conn.open) {
+                            conn.close();
+                        }
+                    });
+                    this.connections.clear();
+                    this.updateConnectionStatus();
+                },
+                
+                // Sharing functions
+                async shareList() {
+                    const shareText = `Join my shopping list "${this.currentListName}"!\n\nOpen this link: ${window.location.href}\nThen use this Peer ID: ${this.currentListId}`;
+                    
+                    // Try Web Share API first (mobile-friendly)
+                    if (navigator.share) {
+                        try {
+                            await navigator.share({
+                                title: `Join "${this.currentListName}"`,
+                                text: shareText,
+                                url: window.location.href
+                            });
+                            return;
+                        } catch (err) {
+                            // User cancelled or share failed, fall back to clipboard
+                            console.log('Share cancelled or failed, falling back to clipboard');
+                        }
+                    }
+                    
+                    // Fallback to clipboard copy
+                    await this.copyToClipboard(shareText, 'Invitation copied to clipboard! Share this with others to let them join your shopping list.');
+                },
+                
+                async shareViaSMS() {
+                    const message = `Join my shopping list "${this.currentListName}"! Open ${window.location.href} and use Peer ID: ${this.currentListId}`;
+                    const smsUrl = `sms:?body=${encodeURIComponent(message)}`;
+                    window.open(smsUrl, '_self');
+                },
+                
+                async copyPeerID() {
+                    await this.copyToClipboard(this.currentListId, 'Peer ID copied to clipboard!');
+                },
+                
+                async copyToClipboard(text, successMessage) {
+                    try {
+                        await navigator.clipboard.writeText(text);
+                        alert(successMessage);
+                    } catch (err) {
+                        console.error('Failed to copy: ', err);
+                        // Final fallback for older browsers
+                        const textArea = document.createElement('textarea');
+                        textArea.value = text;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        document.execCommand('copy');
+                        document.body.removeChild(textArea);
+                        alert(successMessage);
+                    }
+                },
+                
+                // Utility functions
+                generateListId() {
+                    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+                },
+                
+                generateItemId() {
+                    return Date.now().toString(36) + Math.random().toString(36).substring(2);
+                }
+            },
+            
+            beforeUnmount() {
+                this.disconnectAllPeers();
+                if (this.peer) {
+                    this.peer.destroy();
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
