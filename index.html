@@ -912,15 +912,22 @@
                                 this.currentListName = message.data.listName;
                             }
                             this.mergeItems(message.data.items);
+                            // Don't forward full_sync messages to avoid loops
                             break;
                         case 'item_added':
                             this.addItemFromPeer(message.data);
+                            // Forward to other peers (exclude sender)
+                            this.forwardToPeers(message.type, message.data, fromPeer);
                             break;
                         case 'item_removed':
                             this.removeItemFromPeer(message.data.id);
+                            // Forward to other peers (exclude sender)
+                            this.forwardToPeers(message.type, message.data, fromPeer);
                             break;
                         case 'item_updated':
                             this.updateItemFromPeer(message.data);
+                            // Forward to other peers (exclude sender)
+                            this.forwardToPeers(message.type, message.data, fromPeer);
                             break;
                         case 'reverse_connection_request':
                             // This shouldn't happen in normal data flow, but handle it
@@ -940,6 +947,17 @@
                     
                     this.connections.forEach((conn, peerId) => {
                         this.sendToPeer(conn, type, data);
+                    });
+                },
+                
+                forwardToPeers(type, data, excludePeerId) {
+                    console.log('Forwarding message:', type, 'to other peers, excluding:', excludePeerId);
+                    
+                    this.connections.forEach((conn, peerId) => {
+                        // Don't send back to the peer who sent us this message
+                        if (peerId !== excludePeerId) {
+                            this.sendToPeer(conn, type, data);
+                        }
                     });
                 },
                 
