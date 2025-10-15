@@ -6,6 +6,7 @@
     <title>Collaborative Shopping List</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -242,6 +243,22 @@
             flex-wrap: wrap;
             margin-top: 10px;
         }
+        
+        .qr-code-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+            margin: 15px auto;
+            max-width: 280px;
+        }
+        
+        .qr-code-container canvas {
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -293,6 +310,9 @@
                             </button>
                             <button class="btn btn-small" @click="shareViaSMS">
                                 💬 SMS
+                            </button>
+                            <button class="btn btn-small" @click="showQRCode">
+                                📱 QR Code
                             </button>
                             <button class="btn btn-small" @click="copyShareUrl">
                                 📋 Copy Link
@@ -409,6 +429,36 @@
                 </div>
             </div>
         </div>
+        
+        <!-- QR Code Modal -->
+        <div v-if="showQRModal" class="modal" @click.self="showQRModal = false">
+            <div class="modal-content" style="text-align: center;">
+                <div class="modal-header">
+                    <h3>📱 Scan to Join "{{ currentListName }}"</h3>
+                    <p style="font-size: 0.9em; color: #666; margin-top: 5px;">
+                        Open your phone camera and point it at the QR code
+                    </p>
+                    <p style="font-size: 0.8em; color: #999; margin-top: 3px;">
+                        Most modern phones will automatically detect and offer to open the link
+                    </p>
+                </div>
+                <div class="qr-code-container" style="margin: 20px 0;">
+                    <canvas ref="qrCanvas" style="max-width: 100%; height: auto;"></canvas>
+                </div>
+                <div style="margin: 15px 0;">
+                    <p style="font-size: 0.8em; color: #666; margin-bottom: 10px;">
+                        Or share this link:
+                    </p>
+                    <div style="background: #f8f9fa; padding: 8px; border-radius: 4px; word-break: break-all; font-size: 0.7em; font-family: monospace;">
+                        {{ generateShareUrl() }}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-small" @click="copyShareUrl">📋 Copy Link</button>
+                    <button class="btn" @click="showQRModal = false">Close</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -420,6 +470,7 @@
                     // UI State
                     showCreateModal: false,
                     showJoinModal: false,
+                    showQRModal: false,
                     newListName: '',
                     joinListId: '',
                     newItemText: '',
@@ -456,9 +507,25 @@
                 this.loadFromStorage();
                 this.checkUrlForPeerId();
                 this.initializePeerJS();
+                
+                // Add keyboard event listener for ESC key
+                document.addEventListener('keydown', this.handleKeyDown);
             },
             
             methods: {
+                // Keyboard handling
+                handleKeyDown(event) {
+                    if (event.key === 'Escape') {
+                        if (this.showQRModal) {
+                            this.showQRModal = false;
+                        } else if (this.showCreateModal) {
+                            this.showCreateModal = false;
+                        } else if (this.showJoinModal) {
+                            this.showJoinModal = false;
+                        }
+                    }
+                },
+                
                 // List Management
                 createList() {
                     if (!this.newListName.trim()) return;
@@ -998,6 +1065,46 @@
                     await this.copyToClipboard(this.currentListId, 'Peer ID copied to clipboard!');
                 },
                 
+                async showQRCode() {
+                    this.showQRModal = true;
+                    
+                    // Wait for the modal to render and then generate QR code
+                    await this.$nextTick();
+                    this.generateQRCode();
+                },
+                
+                async generateQRCode() {
+                    if (!window.QRCode) {
+                        alert('QR Code library not loaded. Please refresh the page and try again.');
+                        return;
+                    }
+                    
+                    try {
+                        const canvas = this.$refs.qrCanvas;
+                        if (!canvas) {
+                            console.error('QR Canvas not found');
+                            return;
+                        }
+                        
+                        const shareUrl = this.generateShareUrl();
+                        
+                        // Generate QR code
+                        await QRCode.toCanvas(canvas, shareUrl, {
+                            width: 256,
+                            margin: 2,
+                            color: {
+                                dark: '#2c3e50',
+                                light: '#ffffff'
+                            }
+                        });
+                        
+                        console.log('QR code generated for:', shareUrl);
+                    } catch (error) {
+                        console.error('Error generating QR code:', error);
+                        alert('Failed to generate QR code. Please try again.');
+                    }
+                },
+                
                 async copyToClipboard(text, successMessage) {
                     try {
                         await navigator.clipboard.writeText(text);
@@ -1177,6 +1284,7 @@
                 if (this.peer) {
                     this.peer.destroy();
                 }
+                document.removeEventListener('keydown', this.handleKeyDown);
             }
         }).mount('#app');
     </script>
