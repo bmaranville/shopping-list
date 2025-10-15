@@ -1050,9 +1050,24 @@
                     
                     if (peerIdFromUrl) {
                         console.log('Found peer ID in URL:', peerIdFromUrl);
-                        // Set up to join this list once PeerJS is ready
+                        // URL takes priority - user clicked a share link/QR code
                         this.pendingJoinId = peerIdFromUrl;
                         this.showJoinModal = false; // Don't show modal, auto-join
+                        
+                        // Switch to the shared list if different from current
+                        if (this.currentListId !== peerIdFromUrl) {
+                            console.log('Switching to shared list from URL:', peerIdFromUrl);
+                            // Clean up existing connections if switching lists
+                            if (this.currentListId) {
+                                this.stopReconnectionAttempts();
+                                this.disconnectAllPeers();
+                            }
+                            // Set up the new list from URL
+                            this.currentListId = peerIdFromUrl;
+                            this.currentListName = `Shopping List ${peerIdFromUrl.substring(0, 8)}`;
+                            this.items = [];
+                            this.isListCreator = false;
+                        }
                         
                         // Clean the URL without the join parameter
                         const newUrl = new URL(window.location);
@@ -1062,7 +1077,7 @@
                 },
                 
                 autoJoinFromUrl() {
-                    if (this.pendingJoinId && this.peerId && !this.currentListId) {
+                    if (this.pendingJoinId && this.peerId) {
                         console.log('Auto-joining list from URL:', this.pendingJoinId);
                         this.joinListWithId(this.pendingJoinId);
                         this.pendingJoinId = null;
