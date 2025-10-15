@@ -953,9 +953,12 @@
                     
                     switch (message.type) {
                         case 'full_sync':
-                            if (message.data.listName && !this.currentListName.startsWith('Shopping List')) {
-                                // Update list name if we're joining
+                            if (message.data.listName) {
+                                // Always update to the real list name from the sender
                                 this.currentListName = message.data.listName;
+                                console.log('📝 Updated list name to:', message.data.listName);
+                                // Save the updated name
+                                this.saveToStorage();
                             }
                             this.mergeItems(message.data.items);
                             // Don't forward full_sync messages to avoid loops
@@ -1128,9 +1131,16 @@
                             }
                             // Set up the new list from URL
                             this.currentListId = peerIdFromUrl;
-                            this.currentListName = `Shopping List ${peerIdFromUrl.substring(0, 8)}`;
-                            this.items = [];
                             this.isListCreator = false;
+                            this.items = [];
+                            
+                            // Try to load existing data for this list (including name)
+                            this.loadListFromStorage(peerIdFromUrl);
+                            
+                            // If no stored name found, use placeholder (will be updated by full_sync)
+                            if (!this.currentListName || this.currentListName.startsWith('Shopping List')) {
+                                this.currentListName = `Shopping List ${peerIdFromUrl.substring(0, 8)}`;
+                            }
                         }
                         
                         // Clean the URL without the join parameter
@@ -1150,7 +1160,6 @@
                 
                 joinListWithId(hostPeerId) {
                     this.currentListId = hostPeerId;
-                    this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
                     this.isListCreator = false; // This peer joined an existing list
                     
                     // Track the host peer ID and our own
@@ -1158,8 +1167,13 @@
                     this.knownPeerIds.add(this.peerId);
                     this.saveKnownPeers();
                     
-                    // Try to load existing data for this list
+                    // Try to load existing data for this list (including name)
                     this.loadListFromStorage(this.currentListId);
+                    
+                    // If no stored name found, use placeholder (will be updated by full_sync)
+                    if (!this.currentListName || this.currentListName.startsWith('Shopping List')) {
+                        this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
+                    }
                     
                     this.saveToStorage();
                     
