@@ -563,12 +563,7 @@
                     this.showCreateModal = false;
                     this.newListName = '';
                     
-                    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                    if (isMobile) {
-                        this.connectionStatus = 'Ready to connect (Mobile host - good for connectivity!)';
-                    } else {
-                        this.connectionStatus = 'Waiting for peers to join...';
-                    }
+                    this.connectionStatus = 'List created! Share QR code for others to join';
                 },
                 
                 joinList() {
@@ -918,7 +913,7 @@
                             }
                         } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
                             console.log('⏹️ Max reconnection attempts reached');
-                            this.connectionStatus = 'Connection lost - peers may be offline';
+                            this.connectionStatus = 'Working offline - will sync when peers come online';
                             this.stopReconnectionAttempts();
                         }
                     }, 10000); // Try every 10 seconds
