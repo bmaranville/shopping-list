@@ -257,6 +257,12 @@
             </div>
             
             <div class="main-content">
+                <!-- Join from URL notification -->
+                <div v-if="pendingJoinId" class="status-message" style="background: #e3f2fd; border: 1px solid #2196f3; border-radius: 6px; margin-bottom: 15px;">
+                    <p style="color: #1976d2;">🔗 Joining shopping list from shared link...</p>
+                    <p style="font-size: 0.8em; color: #666; margin-top: 5px;">Please wait while we connect you to the list.</p>
+                </div>
+                
                 <!-- List Controls -->
                 <div class="list-controls" v-if="!currentListId">
                     <div v-if="!peerId" class="status-message">
@@ -269,6 +275,9 @@
                         <button class="btn btn-success" @click="showJoinModal = true">
                             🔗 Join Existing List
                         </button>
+                        <button class="btn btn-small" @click="testConnection" style="margin-top: 10px; width: 100%;">
+                            🔧 Test Connection
+                        </button>
                     </div>
                 </div>
                 
@@ -276,21 +285,31 @@
                 <div v-if="currentListId" class="list-info">
                     <h3>{{ currentListName }}</h3>
                     <div class="share-code" v-if="isHost">
-                        <strong>Share this Peer ID with others:</strong><br>
-                        <code>{{ currentListId }}</code>
+                        <strong>Share this link with others:</strong><br>
+                        <code style="font-size: 0.8em; word-break: break-all;">{{ generateShareUrl() }}</code>
                         <div class="share-buttons">
                             <button class="btn btn-small" @click="shareList">
-                                📤 Share
+                                📤 Share Link
                             </button>
                             <button class="btn btn-small" @click="shareViaSMS">
                                 💬 SMS
                             </button>
-                            <button class="btn btn-small" @click="copyPeerID">
-                                📋 Copy ID
+                            <button class="btn btn-small" @click="copyShareUrl">
+                                📋 Copy Link
                             </button>
                         </div>
                         <p style="font-size: 0.8em; margin-top: 5px; color: #666;">
-                            Others can join by entering this ID in "Join Existing List"
+                            Others can join instantly by clicking the link!
+                        </p>
+                        <details style="margin-top: 8px;">
+                            <summary style="font-size: 0.8em; color: #666; cursor: pointer;">Advanced: Manual Peer ID</summary>
+                            <p style="font-size: 0.75em; margin: 5px 0; color: #666;">
+                                Peer ID: <code>{{ currentListId }}</code>
+                                <button class="btn btn-small" @click="copyPeerID" style="margin-left: 5px; font-size: 10px;">📋</button>
+                            </p>
+                        </details>
+                        <p v-if="isMobileDevice" style="font-size: 0.75em; margin-top: 3px; color: #28a745; font-weight: bold;">
+                            📱 Mobile host - excellent for cross-platform connections!
                         </p>
                     </div>
                     <div class="share-code" v-else>
@@ -420,14 +439,22 @@
                     peerId: null,
                     connections: new Map(),
                     isHost: false,
+                    pendingJoinId: null,
                     
                     // Storage
                     localStorage: window.localStorage
                 }
             },
             
+            computed: {
+                isMobileDevice() {
+                    return /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                }
+            },
+            
             mounted() {
                 this.loadFromStorage();
+                this.checkUrlForPeerId();
                 this.initializePeerJS();
             },
             
@@ -445,26 +472,22 @@
                     this.showCreateModal = false;
                     this.newListName = '';
                     
-                    this.connectionStatus = 'Waiting for peers to join...';
+                    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                    if (isMobile) {
+                        this.connectionStatus = 'Ready to connect (Mobile host - good for connectivity!)';
+                    } else {
+                        this.connectionStatus = 'Waiting for peers to join...';
+                    }
                 },
                 
                 joinList() {
                     if (!this.joinListId.trim()) return;
                     
                     const hostPeerId = this.joinListId.trim();
-                    this.currentListId = hostPeerId;
-                    this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
-                    this.isHost = false;
-                    
-                    // Try to load existing data for this list
-                    this.loadListFromStorage(this.currentListId);
-                    
-                    this.saveToStorage();
                     this.showJoinModal = false;
                     this.joinListId = '';
                     
-                    // Connect to the host peer
-                    this.connectToPeer(hostPeerId);
+                    this.joinListWithId(hostPeerId);
                 },
                 
                 leaveList() {
@@ -553,12 +576,25 @@
                 initializePeerJS() {
                     this.connectionStatus = 'Initializing...';
                     
-                    // Create a new peer with automatic ID generation
+                    // Create a new peer with automatic ID generation and better config
                     this.peer = new Peer({
+                        debug: 2, // Enable debug logging
                         config: {
                             iceServers: [
                                 { urls: 'stun:stun.l.google.com:19302' },
-                                { urls: 'stun:stun1.l.google.com:19302' }
+                                { urls: 'stun:stun1.l.google.com:19302' },
+                                { urls: 'stun:stun.relay.metered.ca:80' },
+                                // Add TURN servers for better NAT traversal
+                                {
+                                    urls: 'turn:openrelay.metered.ca:80',
+                                    username: 'openrelayproject',
+                                    credential: 'openrelayproject'
+                                },
+                                {
+                                    urls: 'turn:openrelay.metered.ca:443',
+                                    username: 'openrelayproject', 
+                                    credential: 'openrelayproject'
+                                }
                             ]
                         }
                     });
@@ -569,8 +605,11 @@
                         this.connectionStatus = 'Ready';
                         console.log('Peer ID:', id);
                         
+                        // Check if we need to auto-join from URL
+                        this.autoJoinFromUrl();
+                        
                         // If we had a current list, we can now create/join it
-                        if (this.currentListId && this.currentListId !== id) {
+                        if (this.currentListId && this.currentListId !== id && !this.pendingJoinId) {
                             this.connectToPeer(this.currentListId);
                         }
                     });
@@ -581,16 +620,25 @@
                     
                     this.peer.on('error', (error) => {
                         console.error('Peer error:', error);
-                        this.connectionStatus = 'Connection error';
+                        this.handlePeerError(error);
                     });
                     
                     this.peer.on('disconnected', () => {
-                        this.connectionStatus = 'Disconnected';
+                        console.log('Peer disconnected from signaling server');
+                        this.connectionStatus = 'Disconnected from signaling server';
                         this.isConnected = false;
+                        
+                        // Try to reconnect
+                        setTimeout(() => {
+                            if (this.peer && !this.peer.destroyed) {
+                                console.log('Attempting to reconnect...');
+                                this.peer.reconnect();
+                            }
+                        }, 3000);
                     });
                 },
                 
-                connectToPeer(peerId) {
+                connectToPeer(peerId, retryCount = 0) {
                     if (!this.peer) {
                         this.connectionStatus = 'Peer not initialized';
                         return;
@@ -601,25 +649,64 @@
                         return;
                     }
                     
-                    this.connectionStatus = 'Connecting to peer...';
+                    this.connectionStatus = `Connecting to peer... ${retryCount > 0 ? `(attempt ${retryCount + 1})` : ''}`;
                     
                     try {
-                        const conn = this.peer.connect(peerId);
+                        const conn = this.peer.connect(peerId, {
+                            reliable: true,
+                            serialization: 'json'
+                        });
+                        
+                        // Set up connection timeout
+                        const timeoutId = setTimeout(() => {
+                            if (!conn.open) {
+                                console.log('Connection timeout, attempting retry...');
+                                conn.close();
+                                if (retryCount < 2) {
+                                    setTimeout(() => {
+                                        this.connectToPeer(peerId, retryCount + 1);
+                                    }, 2000);
+                                } else {
+                                    this.connectionStatus = 'Connection failed - peer may be offline';
+                                    alert('Unable to connect to peer. Please check:\n1. The Peer ID is correct\n2. The other device is online\n3. Both devices have internet connection');
+                                }
+                            }
+                        }, 10000); // 10 second timeout
+                        
+                        conn.on('open', () => {
+                            clearTimeout(timeoutId);
+                        });
+                        
                         this.handleConnection(conn);
                     } catch (error) {
                         console.error('Failed to connect to peer:', error);
                         this.connectionStatus = 'Connection failed';
+                        if (retryCount < 2) {
+                            setTimeout(() => {
+                                this.connectToPeer(peerId, retryCount + 1);
+                            }, 2000);
+                        }
                     }
                 },
                 
                 handleIncomingConnection(conn) {
                     console.log('Incoming connection from:', conn.peer);
+                    
+                    // Check if this is a reverse connection request
+                    if (conn.metadata && conn.metadata.type === 'reverse_connection_request') {
+                        console.log('📥 Received reverse connection request from:', conn.metadata.requesterId);
+                        this.handleReverseConnectionRequest(conn);
+                        return;
+                    }
+                    
                     this.handleConnection(conn);
                 },
                 
                 handleConnection(conn) {
+                    console.log('Setting up connection to:', conn.peer);
+                    
                     conn.on('open', () => {
-                        console.log('Connected to peer:', conn.peer);
+                        console.log('✅ Connection established with peer:', conn.peer);
                         this.connections.set(conn.peer, conn);
                         this.updateConnectionStatus();
                         
@@ -628,6 +715,7 @@
                             items: this.items,
                             listName: this.currentListName
                         });
+                        console.log('📤 Sent full sync to new peer');
                     });
                     
                     conn.on('data', (data) => {
@@ -658,6 +746,27 @@
                     }
                 },
                 
+                handleReverseConnectionRequest(conn) {
+                    // Handle the temporary connection for reverse request
+                    conn.on('data', (data) => {
+                        if (data.type === 'reverse_connection_request' && this.isHost) {
+                            console.log('🔄 Processing reverse connection request from:', data.requesterId);
+                            
+                            // Show notification to host
+                            this.connectionStatus = `Connecting to ${data.requesterId.substring(0, 8)}...`;
+                            
+                            // Host initiates connection to the requester
+                            setTimeout(() => {
+                                this.connectToPeer(data.requesterId);
+                            }, 1000);
+                        }
+                    });
+                    
+                    conn.on('error', (error) => {
+                        console.log('Reverse connection request error:', error);
+                    });
+                },
+                
                 handlePeerMessage(message, fromPeer) {
                     console.log('Received message:', message.type, 'from:', fromPeer);
                     
@@ -677,6 +786,12 @@
                             break;
                         case 'item_updated':
                             this.updateItemFromPeer(message.data);
+                            break;
+                        case 'reverse_connection_request':
+                            // This shouldn't happen in normal data flow, but handle it
+                            if (this.isHost && message.data.requesterId) {
+                                this.connectToPeer(message.data.requesterId);
+                            }
                             break;
                     }
                 },
@@ -764,9 +879,88 @@
                     this.updateConnectionStatus();
                 },
                 
+                handlePeerError(error) {
+                    console.error('Detailed peer error:', error);
+                    
+                    let errorMessage = 'Connection error';
+                    let userMessage = '';
+                    
+                    if (error.type === 'peer-unavailable') {
+                        errorMessage = 'Peer unavailable';
+                        userMessage = 'The peer you\'re trying to connect to is not available. Please check:\n• The Peer ID is correct\n• The other device is online and has the app open\n• Both devices have internet connection';
+                    } else if (error.type === 'network') {
+                        errorMessage = 'Network error';
+                        userMessage = 'Network connection issue. Please check your internet connection and try again.';
+                    } else if (error.type === 'server-error') {
+                        errorMessage = 'Signaling server error';
+                        userMessage = 'PeerJS signaling server is having issues. Please try again in a few minutes.';
+                    } else if (error.message && error.message.includes('Could not connect to peer')) {
+                        errorMessage = 'Peer connection failed';
+                        userMessage = 'Cannot establish direct connection. This may be due to:\n• Firewall restrictions\n• NAT/Router configuration\n• Network policies blocking WebRTC\n\nTry connecting from a different network or ask your network administrator.';
+                    }
+                    
+                    this.connectionStatus = errorMessage;
+                    
+                    if (userMessage) {
+                        // Show user-friendly error after a brief delay
+                        setTimeout(() => {
+                            alert(userMessage);
+                        }, 1000);
+                    }
+                },
+                
+                // URL handling
+                checkUrlForPeerId() {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const peerIdFromUrl = urlParams.get('join');
+                    
+                    if (peerIdFromUrl) {
+                        console.log('Found peer ID in URL:', peerIdFromUrl);
+                        // Set up to join this list once PeerJS is ready
+                        this.pendingJoinId = peerIdFromUrl;
+                        this.showJoinModal = false; // Don't show modal, auto-join
+                        
+                        // Clean the URL without the join parameter
+                        const newUrl = new URL(window.location);
+                        newUrl.searchParams.delete('join');
+                        window.history.replaceState({}, document.title, newUrl.toString());
+                    }
+                },
+                
+                autoJoinFromUrl() {
+                    if (this.pendingJoinId && this.peerId && !this.currentListId) {
+                        console.log('Auto-joining list from URL:', this.pendingJoinId);
+                        this.joinListWithId(this.pendingJoinId);
+                        this.pendingJoinId = null;
+                    }
+                },
+                
+                joinListWithId(hostPeerId) {
+                    this.currentListId = hostPeerId;
+                    this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
+                    this.isHost = false;
+                    
+                    // Try to load existing data for this list
+                    this.loadListFromStorage(this.currentListId);
+                    
+                    this.saveToStorage();
+                    
+                    // Show that we're joining via link
+                    this.connectionStatus = 'Joining from shared link...';
+                    
+                    // Connect to the host peer with fallback
+                    this.connectToPeerWithFallback(hostPeerId);
+                },
+                
+                generateShareUrl() {
+                    const baseUrl = window.location.origin + window.location.pathname;
+                    return `${baseUrl}?join=${encodeURIComponent(this.currentListId)}`;
+                },
+                
                 // Sharing functions
                 async shareList() {
-                    const shareText = `Join my shopping list "${this.currentListName}"!\n\nOpen this link: ${window.location.href}\nThen use this Peer ID: ${this.currentListId}`;
+                    const shareUrl = this.generateShareUrl();
+                    const shareText = `Join my shopping list "${this.currentListName}"!\n\nClick this link to join automatically:`;
                     
                     // Try Web Share API first (mobile-friendly)
                     if (navigator.share) {
@@ -774,7 +968,7 @@
                             await navigator.share({
                                 title: `Join "${this.currentListName}"`,
                                 text: shareText,
-                                url: window.location.href
+                                url: shareUrl
                             });
                             return;
                         } catch (err) {
@@ -784,13 +978,20 @@
                     }
                     
                     // Fallback to clipboard copy
-                    await this.copyToClipboard(shareText, 'Invitation copied to clipboard! Share this with others to let them join your shopping list.');
+                    const fullMessage = `${shareText}\n${shareUrl}`;
+                    await this.copyToClipboard(fullMessage, 'Share link copied to clipboard! Send this link to others - they can join by just clicking it!');
                 },
                 
                 async shareViaSMS() {
-                    const message = `Join my shopping list "${this.currentListName}"! Open ${window.location.href} and use Peer ID: ${this.currentListId}`;
+                    const shareUrl = this.generateShareUrl();
+                    const message = `Join my shopping list "${this.currentListName}"! Click this link: ${shareUrl}`;
                     const smsUrl = `sms:?body=${encodeURIComponent(message)}`;
                     window.open(smsUrl, '_self');
+                },
+                
+                async copyShareUrl() {
+                    const shareUrl = this.generateShareUrl();
+                    await this.copyToClipboard(shareUrl, 'Share link copied to clipboard! Send this to others - they can join by just clicking it!');
                 },
                 
                 async copyPeerID() {
@@ -821,6 +1022,153 @@
                 
                 generateItemId() {
                     return Date.now().toString(36) + Math.random().toString(36).substring(2);
+                },
+                
+                async connectToPeerWithFallback(hostPeerId) {
+                    // First, try normal connection (joiner connects to host)
+                    console.log('🔄 Attempting direct connection to host...');
+                    this.connectionStatus = 'Connecting to host...';
+                    
+                    try {
+                        await this.connectToPeer(hostPeerId);
+                        
+                        // Wait a bit to see if connection succeeds
+                        setTimeout(() => {
+                            if (!this.connections.has(hostPeerId)) {
+                                console.log('🔄 Direct connection failed, trying reverse connection...');
+                                this.attemptReverseConnection(hostPeerId);
+                            }
+                        }, 8000);
+                        
+                    } catch (error) {
+                        console.log('🔄 Direct connection failed immediately, trying reverse connection...');
+                        this.attemptReverseConnection(hostPeerId);
+                    }
+                },
+                
+                attemptReverseConnection(hostPeerId) {
+                    this.connectionStatus = 'Requesting reverse connection...';
+                    
+                    // Send a reverse connection request through PeerJS's messaging
+                    // We'll use a temporary connection just to send the reverse request
+                    try {
+                        const tempConn = this.peer.connect(hostPeerId, {
+                            metadata: { 
+                                type: 'reverse_connection_request',
+                                requesterId: this.peerId 
+                            }
+                        });
+                        
+                        tempConn.on('open', () => {
+                            console.log('📤 Sending reverse connection request...');
+                            tempConn.send({
+                                type: 'reverse_connection_request',
+                                requesterId: this.peerId,
+                                requesterName: this.currentListName
+                            });
+                            
+                            // Close the temp connection after sending request
+                            setTimeout(() => tempConn.close(), 1000);
+                        });
+                        
+                        tempConn.on('error', (error) => {
+                            console.log('❌ Could not send reverse connection request:', error);
+                            this.connectionStatus = 'Connection failed - host may be offline';
+                            setTimeout(() => {
+                                alert('Unable to connect to the host. Please ensure:\n• The Peer ID is correct\n• The host device is online with the app open\n• Both devices have good internet connection\n\nYou may need to try creating the list from this device instead.');
+                            }, 1000);
+                        });
+                        
+                    } catch (error) {
+                        console.log('❌ Reverse connection attempt failed:', error);
+                        this.connectionStatus = 'Connection failed';
+                    }
+                },
+                
+                async testConnection() {
+                    const testResults = [];
+                    
+                    // Test 1: Check if PeerJS is initialized
+                    if (this.peer && this.peerId) {
+                        testResults.push('✅ PeerJS initialized successfully');
+                        testResults.push(`📍 Your Peer ID: ${this.peerId}`);
+                    } else {
+                        testResults.push('❌ PeerJS not initialized');
+                    }
+                    
+                    // Test 2: Check WebRTC support
+                    if (window.RTCPeerConnection) {
+                        testResults.push('✅ WebRTC is supported');
+                    } else {
+                        testResults.push('❌ WebRTC not supported in this browser');
+                    }
+                    
+                    // Test 3: Check if we're on mobile
+                    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                    if (isMobile) {
+                        testResults.push('📱 Mobile device detected - may have NAT restrictions');
+                    } else {
+                        testResults.push('💻 Desktop device - typically easier for incoming connections');
+                    }
+                    
+                    // Test 4: Test STUN server connectivity
+                    try {
+                        const pc = new RTCPeerConnection({
+                            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+                        });
+                        
+                        // Create a dummy data channel to trigger ICE gathering
+                        pc.createDataChannel('test');
+                        
+                        const offer = await pc.createOffer();
+                        await pc.setLocalDescription(offer);
+                        
+                        // Wait for ICE candidates
+                        const iceTest = new Promise((resolve) => {
+                            let candidateCount = 0;
+                            const timeout = setTimeout(() => resolve(candidateCount), 5000);
+                            
+                            pc.onicecandidate = (event) => {
+                                if (event.candidate) {
+                                    candidateCount++;
+                                    if (candidateCount >= 1) {
+                                        clearTimeout(timeout);
+                                        resolve(candidateCount);
+                                    }
+                                }
+                            };
+                        });
+                        
+                        const candidates = await iceTest;
+                        pc.close();
+                        
+                        if (candidates > 0) {
+                            testResults.push(`✅ ICE candidates found: ${candidates}`);
+                        } else {
+                            testResults.push('⚠️ No ICE candidates found - may have connectivity issues');
+                        }
+                    } catch (error) {
+                        testResults.push(`❌ ICE connectivity test failed: ${error.message}`);
+                    }
+                    
+                    // Test 5: Check network type if available
+                    if (navigator.connection) {
+                        testResults.push(`📶 Network: ${navigator.connection.effectiveType || 'unknown'}`);
+                    }
+                    
+                    // Show results with mobile-specific advice
+                    let advice = '\nTroubleshooting tips:';
+                    if (isMobile) {
+                        advice += '\n• Mobile networks often block incoming connections';
+                        advice += '\n• Try creating lists from mobile, joining from desktop';
+                        advice += '\n• Use mobile hotspot for desktop if needed';
+                    } else {
+                        advice += '\n• Desktop typically works better as host';
+                        advice += '\n• Try different network if issues persist';
+                    }
+                    advice += '\n• Disable VPN/firewall temporarily\n• Try from another device/browser';
+                    
+                    alert('Connection Test Results:\n\n' + testResults.join('\n') + advice);
                 }
             },
             
