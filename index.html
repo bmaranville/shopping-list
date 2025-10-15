@@ -6,7 +6,7 @@
     <title>Collaborative Shopping List</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/lib/browser.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -484,6 +484,7 @@
                     isConnected: false,
                     connectedPeers: 0,
                     connectionStatus: 'Offline',
+                    serverErrorCount: 0,
                     
                     // PeerJS WebRTC
                     peer: null,
@@ -727,15 +728,15 @@
                         // Set up connection timeout
                         const timeoutId = setTimeout(() => {
                             if (!conn.open) {
-                                console.log('Connection timeout, attempting retry...');
+                                console.log('Connection timeout, this is normal if peer is offline');
                                 conn.close();
                                 if (retryCount < 2) {
                                     setTimeout(() => {
                                         this.connectToPeer(peerId, retryCount + 1);
                                     }, 2000);
                                 } else {
-                                    this.connectionStatus = 'Connection failed - peer may be offline';
-                                    alert('Unable to connect to peer. Please check:\n1. The Peer ID is correct\n2. The other device is online\n3. Both devices have internet connection');
+                                    this.connectionStatus = 'Peer not available';
+                                    // Don't show popup - this is normal behavior
                                 }
                             }
                         }, 10000); // 10 second timeout
@@ -746,8 +747,8 @@
                         
                         this.handleConnection(conn);
                     } catch (error) {
-                        console.error('Failed to connect to peer:', error);
-                        this.connectionStatus = 'Connection failed';
+                        console.log('Failed to connect to peer (normal if offline):', error);
+                        this.connectionStatus = 'Peer not available';
                         if (retryCount < 2) {
                             setTimeout(() => {
                                 this.connectToPeer(peerId, retryCount + 1);
@@ -947,32 +948,31 @@
                 },
                 
                 handlePeerError(error) {
-                    console.error('Detailed peer error:', error);
+                    console.log('Peer connection issue (normal):', error.type || error.message);
                     
-                    let errorMessage = 'Connection error';
-                    let userMessage = '';
-                    
-                    if (error.type === 'peer-unavailable') {
-                        errorMessage = 'Peer unavailable';
-                        userMessage = 'The peer you\'re trying to connect to is not available. Please check:\n• The Peer ID is correct\n• The other device is online and has the app open\n• Both devices have internet connection';
+                    // Only show critical errors that need user attention
+                    if (error.type === 'server-error') {
+                        this.connectionStatus = 'Signaling server unavailable';
+                        // Only show popup for server errors after multiple attempts
+                        if (this.serverErrorCount > 2) {
+                            setTimeout(() => {
+                                alert('PeerJS signaling server is having issues. Please try again in a few minutes.');
+                            }, 1000);
+                        }
+                        this.serverErrorCount = (this.serverErrorCount || 0) + 1;
                     } else if (error.type === 'network') {
-                        errorMessage = 'Network error';
-                        userMessage = 'Network connection issue. Please check your internet connection and try again.';
-                    } else if (error.type === 'server-error') {
-                        errorMessage = 'Signaling server error';
-                        userMessage = 'PeerJS signaling server is having issues. Please try again in a few minutes.';
-                    } else if (error.message && error.message.includes('Could not connect to peer')) {
-                        errorMessage = 'Peer connection failed';
-                        userMessage = 'Cannot establish direct connection. This may be due to:\n• Firewall restrictions\n• NAT/Router configuration\n• Network policies blocking WebRTC\n\nTry connecting from a different network or ask your network administrator.';
+                        this.connectionStatus = 'Network issue';
+                    } else if (error.type === 'peer-unavailable') {
+                        // This is completely normal - peer might not be online
+                        this.connectionStatus = 'Ready to connect';
+                    } else {
+                        // Generic connection issues are normal
+                        this.connectionStatus = 'Ready to connect';
                     }
                     
-                    this.connectionStatus = errorMessage;
-                    
-                    if (userMessage) {
-                        // Show user-friendly error after a brief delay
-                        setTimeout(() => {
-                            alert(userMessage);
-                        }, 1000);
+                    // Reset error count after successful operations
+                    if (this.isConnected) {
+                        this.serverErrorCount = 0;
                     }
                 },
                 
@@ -1179,16 +1179,14 @@
                         });
                         
                         tempConn.on('error', (error) => {
-                            console.log('❌ Could not send reverse connection request:', error);
-                            this.connectionStatus = 'Connection failed - host may be offline';
-                            setTimeout(() => {
-                                alert('Unable to connect to the host. Please ensure:\n• The Peer ID is correct\n• The host device is online with the app open\n• Both devices have good internet connection\n\nYou may need to try creating the list from this device instead.');
-                            }, 1000);
+                            console.log('Could not send reverse connection request (normal if host offline):', error);
+                            this.connectionStatus = 'Host not available';
+                            // Don't show popup - this is normal when host is offline
                         });
                         
                     } catch (error) {
-                        console.log('❌ Reverse connection attempt failed:', error);
-                        this.connectionStatus = 'Connection failed';
+                        console.log('Reverse connection attempt failed (normal if host offline):', error);
+                        this.connectionStatus = 'Host not available';
                     }
                 },
                 
