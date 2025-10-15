@@ -301,7 +301,7 @@
                 <!-- Current List Info -->
                 <div v-if="currentListId" class="list-info">
                     <h3>{{ currentListName }}</h3>
-                    <div class="share-code" v-if="isHost">
+                    <div class="share-code" v-if="isListCreator">
                         <strong>Share this link with others:</strong><br>
                         <code style="font-size: 0.8em; word-break: break-all;">{{ generateShareUrl() }}</code>
                         <div class="share-buttons">
@@ -334,6 +334,17 @@
                     </div>
                     <div class="share-code" v-else>
                         <strong>Connected to:</strong> {{ currentListId.substring(0, 12) }}...
+                        <div class="share-buttons" style="margin-top: 10px;">
+                            <button class="btn btn-small" @click="showQRCode">
+                                📱 QR Code
+                            </button>
+                            <button class="btn btn-small" @click="copyShareUrl">
+                                📋 Copy Link
+                            </button>
+                        </div>
+                        <p style="font-size: 0.8em; margin-top: 5px; color: #666;">
+                            Share this list with others!
+                        </p>
                     </div>
                     <button class="btn btn-danger btn-small" @click="leaveList">
                         Leave List
@@ -490,11 +501,16 @@
                     peer: null,
                     peerId: null,
                     connections: new Map(),
-                    isHost: false,
+                    isListCreator: false, // Only for UI - who can share the list
                     pendingJoinId: null,
                     
                     // Storage
-                    localStorage: window.localStorage
+                    localStorage: window.localStorage,
+                    
+                    // Reconnection
+                    reconnectInterval: null,
+                    reconnectAttempts: 0,
+                    maxReconnectAttempts: 10
                 }
             },
             
@@ -534,7 +550,7 @@
                     this.currentListId = this.peerId; // Use peer ID as list ID
                     this.currentListName = this.newListName.trim();
                     this.items = [];
-                    this.isHost = true;
+                    this.isListCreator = true; // This peer created the list
                     
                     this.saveToStorage();
                     this.showCreateModal = false;
@@ -562,7 +578,9 @@
                     this.currentListId = null;
                     this.currentListName = '';
                     this.items = [];
-                    this.isHost = false;
+                    this.isListCreator = false;
+                    this.stopReconnectionAttempts();
+                    this.reconnectAttempts = 0;
                     this.disconnectAllPeers();
                     this.saveToStorage();
                 },
@@ -608,7 +626,8 @@
                     const data = {
                         currentListId: this.currentListId,
                         currentListName: this.currentListName,
-                        items: this.items
+                        items: this.items,
+                        isListCreator: this.isListCreator
                     };
                     this.localStorage.setItem('shoppingList', JSON.stringify(data));
                     
@@ -628,6 +647,7 @@
                         this.currentListId = parsed.currentListId;
                         this.currentListName = parsed.currentListName;
                         this.items = parsed.items || [];
+                        this.isListCreator = parsed.isListCreator || false;
                     }
                 },
                 
@@ -676,10 +696,8 @@
                         // Check if we need to auto-join from URL
                         this.autoJoinFromUrl();
                         
-                        // If we had a current list, we can now create/join it
-                        if (this.currentListId && this.currentListId !== id && !this.pendingJoinId) {
-                            this.connectToPeer(this.currentListId);
-                        }
+                        // Handle reconnection logic
+                        this.handleReconnection();
                     });
                     
                     this.peer.on('connection', (conn) => {
@@ -808,22 +826,71 @@
                     this.isConnected = this.connectedPeers > 0;
                     
                     if (this.connectedPeers === 0) {
-                        this.connectionStatus = this.isHost ? 'Waiting for peers to join...' : 'Ready to connect';
+                        this.connectionStatus = 'Ready to connect';
+                        // Start reconnection attempts if we have a list but no connections
+                        if (this.currentListId) {
+                            this.startReconnectionAttempts();
+                        }
                     } else {
                         this.connectionStatus = `Connected (${this.connectedPeers} peer${this.connectedPeers > 1 ? 's' : ''})`;
+                        // Stop reconnection attempts when connected
+                        this.stopReconnectionAttempts();
+                        this.reconnectAttempts = 0;
+                    }
+                },
+                
+                handleReconnection() {
+                    // If we have a stored list but no pending join, try to reconnect
+                    if (this.currentListId && !this.pendingJoinId && this.currentListId !== this.peerId) {
+                        console.log('🔄 Attempting to reconnect to stored list:', this.currentListId);
+                        this.connectionStatus = 'Reconnecting to list...';
+                        this.connectToPeerWithFallback(this.currentListId);
+                    }
+                    // If we created the list, wait for reconnections but also try to reconnect to others
+                    else if (this.currentListId && this.isListCreator) {
+                        console.log('📋 List creator ready for reconnections to list:', this.currentListName);
+                        this.connectionStatus = 'Waiting for peers to reconnect...';
+                        // Note: List creator will also try to reconnect if they discover other peers
+                    }
+                },
+                
+                startReconnectionAttempts() {
+                    // Don't start if already running or if we don't have a list
+                    if (this.reconnectInterval || !this.currentListId) return;
+                    
+                    console.log('🔄 Starting periodic reconnection attempts...');
+                    this.reconnectInterval = setInterval(() => {
+                        if (this.connectedPeers === 0 && this.reconnectAttempts < this.maxReconnectAttempts) {
+                            this.reconnectAttempts++;
+                            console.log(`🔄 Reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts}`);
+                            this.connectionStatus = `Reconnecting... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`;
+                            this.connectToPeerWithFallback(this.currentListId);
+                        } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                            console.log('⏹️ Max reconnection attempts reached');
+                            this.connectionStatus = 'Connection lost - host may be offline';
+                            this.stopReconnectionAttempts();
+                        }
+                    }, 10000); // Try every 10 seconds
+                },
+                
+                stopReconnectionAttempts() {
+                    if (this.reconnectInterval) {
+                        clearInterval(this.reconnectInterval);
+                        this.reconnectInterval = null;
+                        console.log('⏹️ Stopped reconnection attempts');
                     }
                 },
                 
                 handleReverseConnectionRequest(conn) {
                     // Handle the temporary connection for reverse request
                     conn.on('data', (data) => {
-                        if (data.type === 'reverse_connection_request' && this.isHost) {
+                        if (data.type === 'reverse_connection_request') {
                             console.log('🔄 Processing reverse connection request from:', data.requesterId);
                             
-                            // Show notification to host
+                            // Show notification
                             this.connectionStatus = `Connecting to ${data.requesterId.substring(0, 8)}...`;
                             
-                            // Host initiates connection to the requester
+                            // Any peer can initiate connection to the requester
                             setTimeout(() => {
                                 this.connectToPeer(data.requesterId);
                             }, 1000);
@@ -857,7 +924,7 @@
                             break;
                         case 'reverse_connection_request':
                             // This shouldn't happen in normal data flow, but handle it
-                            if (this.isHost && message.data.requesterId) {
+                            if (message.data.requesterId) {
                                 this.connectToPeer(message.data.requesterId);
                             }
                             break;
@@ -1005,7 +1072,7 @@
                 joinListWithId(hostPeerId) {
                     this.currentListId = hostPeerId;
                     this.currentListName = `Shopping List ${hostPeerId.substring(0, 8)}`;
-                    this.isHost = false;
+                    this.isListCreator = false; // This peer joined an existing list
                     
                     // Try to load existing data for this list
                     this.loadListFromStorage(this.currentListId);
@@ -1295,6 +1362,7 @@
             },
             
             beforeUnmount() {
+                this.stopReconnectionAttempts();
                 this.disconnectAllPeers();
                 if (this.peer) {
                     this.peer.destroy();
