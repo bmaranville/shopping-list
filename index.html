@@ -954,11 +954,19 @@
                     switch (message.type) {
                         case 'full_sync':
                             if (message.data.listName) {
-                                // Always update to the real list name from the sender
-                                this.currentListName = message.data.listName;
-                                console.log('📝 Updated list name to:', message.data.listName);
-                                // Save the updated name
-                                this.saveToStorage();
+                                // Only update list name if we don't have a better one
+                                // (Don't let generic names overwrite real names)
+                                if (this.currentListName.startsWith('Shopping List') && 
+                                    !message.data.listName.startsWith('Shopping List')) {
+                                    this.currentListName = message.data.listName;
+                                    console.log('📝 Updated list name to:', message.data.listName);
+                                    // Save the updated name
+                                    this.saveToStorage();
+                                } else if (!this.currentListName.startsWith('Shopping List') && 
+                                          message.data.listName.startsWith('Shopping List')) {
+                                    // Don't overwrite real name with generic name
+                                    console.log('📝 Ignoring generic list name, keeping:', this.currentListName);
+                                }
                             }
                             this.mergeItems(message.data.items);
                             // Don't forward full_sync messages to avoid loops
