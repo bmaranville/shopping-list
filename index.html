@@ -6,7 +6,7 @@
     <title>Collaborative Shopping List</title>
     <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
     <script src="https://unpkg.com/peerjs@1.5.0/dist/peerjs.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/lib/browser.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode-generator@2.0.4/dist/qrcode.min.js"></script>
     <style>
         * {
             box-sizing: border-box;
@@ -1074,7 +1074,7 @@
                 },
                 
                 async generateQRCode() {
-                    if (!window.QRCode) {
+                    if (!window.qrcode) {
                         alert('QR Code library not loaded. Please refresh the page and try again.');
                         return;
                     }
@@ -1088,15 +1088,32 @@
                         
                         const shareUrl = this.generateShareUrl();
                         
-                        // Generate QR code
-                        await QRCode.toCanvas(canvas, shareUrl, {
-                            width: 256,
-                            margin: 2,
-                            color: {
-                                dark: '#2c3e50',
-                                light: '#ffffff'
+                        // Create QR code using qrcode-generator library
+                        const qr = qrcode(0, 'M'); // Error correction level M
+                        qr.addData(shareUrl);
+                        qr.make();
+                        
+                        // Get canvas context and set size
+                        const ctx = canvas.getContext('2d');
+                        const size = 256;
+                        const cellSize = size / qr.getModuleCount();
+                        
+                        canvas.width = size;
+                        canvas.height = size;
+                        
+                        // Clear canvas with white background
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, size, size);
+                        
+                        // Draw QR code
+                        ctx.fillStyle = '#2c3e50';
+                        for (let row = 0; row < qr.getModuleCount(); row++) {
+                            for (let col = 0; col < qr.getModuleCount(); col++) {
+                                if (qr.isDark(row, col)) {
+                                    ctx.fillRect(col * cellSize, row * cellSize, cellSize, cellSize);
+                                }
                             }
-                        });
+                        }
                         
                         console.log('QR code generated for:', shareUrl);
                     } catch (error) {
